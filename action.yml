@@ -122,6 +122,8 @@ inputs:
 outputs:
     app-url:
         description: 'URL of the Deployed Application'
+    ip-address:
+        description: 'IP Address of Deployed Application'
 branding:
     icon: 'azure-logo.svg'
     color: 'blue'
