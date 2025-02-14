@@ -3,7 +3,11 @@ import * as core from '@actions/core';
 import { IAuthorizer } from "azure-actions-webclient/Authorizer/IAuthorizer";
 
 import fs = require('fs');
-import { ContainerInstanceManagementModels } from '@azure/arm-containerinstance';
+import {
+    ContainerGroupDiagnostics, EnvironmentVariable, GpuSku, ContainerGroupIpAddressType, OperatingSystemTypes,
+    Port, ContainerGroupNetworkProtocol, ContainerGroupRestartPolicy, Volume, VolumeMount, ContainerGroupSubnetId,
+    LogAnalytics, LogAnalyticsLogType, GitRepoVolume, AzureFileVolume
+} from '@azure/arm-containerinstance';
 
 export class TaskParameters {
     private static taskparams: TaskParameters;
@@ -11,26 +15,27 @@ export class TaskParameters {
     private _resourceGroup: string;
     private _commandLine: Array<string>;
     private _cpu: number;
-    private _diagnostics: ContainerInstanceManagementModels.ContainerGroupDiagnostics;
+    private _diagnostics: ContainerGroupDiagnostics;
     private _dnsNameLabel: string;
-    private _environmentVariables: Array<ContainerInstanceManagementModels.EnvironmentVariable>;
+    private _environmentVariables: Array<EnvironmentVariable>;
     private _gpuCount: number;
-    private _gpuSKU: ContainerInstanceManagementModels.GpuSku;
-    private _image:string;
-    private _ipAddress:ContainerInstanceManagementModels.ContainerGroupIpAddressType;
-    private _location:string;
+    private _gpuSKU: GpuSku;
+    private _image: string;
+    private _ipAddress: ContainerGroupIpAddressType;
+    private _location: string;
     private _memory: number;
     private _containerName: string;
-    private _osType: ContainerInstanceManagementModels.OperatingSystemTypes;
-    private _ports: Array<ContainerInstanceManagementModels.Port>;
-    private _protocol: ContainerInstanceManagementModels.ContainerGroupNetworkProtocol;
+    private _osType: OperatingSystemTypes;
+    private _ports: Array<Port>;
+    private _protocol: ContainerGroupNetworkProtocol;
     private _registryLoginServer: string;
     private _registryUsername: string;
     private _registryPassword: string;
-    private _restartPolicy: ContainerInstanceManagementModels.ContainerGroupRestartPolicy;
-    private _volumes: Array<ContainerInstanceManagementModels.Volume>;
-    private _volumeMounts: Array<ContainerInstanceManagementModels.VolumeMount>;
-    
+    private _restartPolicy: ContainerGroupRestartPolicy;
+    private _volumes: Array<Volume>;
+    private _volumeMounts: Array<VolumeMount>;
+    private _subnet_ids: Array<ContainerGroupSubnetId>;
+
     private _subscriptionId: string;
 
     private constructor(endpoint: IAuthorizer) {
@@ -39,13 +44,13 @@ export class TaskParameters {
         this._resourceGroup = core.getInput('resource-group', { required: true });
         this._commandLine = [];
         let commandLine = core.getInput("command-line");
-        if(commandLine) {
+        if (commandLine) {
             commandLine.split(' ').forEach((command: string) => {
                 this._commandLine.push(command);
             });
         }
         this._cpu = parseFloat(core.getInput('cpu'));
-        this._dnsNameLabel = core.getInput('dns-name-label', { required: true });
+        this._dnsNameLabel = core.getInput('dns-name-label');
         this._diagnostics = {}
         let logType = core.getInput('log-type');
         let logAnalyticsWorkspace = core.getInput('log-analytics-workspace');
@@ -57,18 +62,18 @@ export class TaskParameters {
         this._getEnvironmentVariables(environmentVariables, secureEnvironmentVariables);
         let gpuCount = core.getInput('gpu-count');
         let gpuSku = core.getInput('gpu-sku');
-        if(gpuSku && !gpuCount) {
-            throw Error("You need to specify the count of GPU Resources with the SKU!"); 
+        if (gpuSku && !gpuCount) {
+            throw Error("You need to specify the count of GPU Resources with the SKU!");
         } else {
-            if(gpuCount && !gpuSku) {
+            if (gpuCount && !gpuSku) {
                 throw Error("GPU SKU is not specified for the count. Please provide the `gpu-sku` parameter");
             }
             this._gpuCount = parseInt(gpuCount);
-            this._gpuSKU = (gpuSku == 'K80') ? 'K80' : ( gpuSku == 'P100' ? 'P100' : 'V100');
+            this._gpuSKU = (gpuSku == 'K80') ? 'K80' : (gpuSku == 'P100' ? 'P100' : 'V100');
         }
         this._image = core.getInput('image', { required: true });
         let ipAddress = core.getInput('ip-address');
-        if(!["Private", "Public"].includes(ipAddress)) {
+        if (!["Private", "Public"].includes(ipAddress)) {
             throw Error('The Value of IP Address must be either Public or Private');
         } else {
             this._ipAddress = (ipAddress == 'Public') ? 'Public' : 'Private';
@@ -83,31 +88,32 @@ export class TaskParameters {
         } else {
             this._osType = (osType == 'Linux') ? 'Linux' : 'Windows';
         }
-        
+
         let ports = core.getInput('ports');
         this._ports = [];
         this._getPorts(ports);
         let protocol = core.getInput('protocol');
-        if(!["TCP", "UDP"].includes(protocol)) {
+        if (!["TCP", "UDP"].includes(protocol)) {
             throw Error("The Network Protocol can only be TCP or UDP");
         } else {
             this._protocol = protocol == "TCP" ? 'TCP' : 'UDP';
         }
+
         this._registryLoginServer = core.getInput('registry-login-server');
-        if(!this._registryLoginServer) {
+        if (!this._registryLoginServer) {
             // If the user doesn't give registry login server and the registry is ACR
             let imageList = this._image.split('/');
-            if(imageList[0].indexOf('azurecr') > -1) {
+            if (imageList[0].indexOf('azurecr') > -1) {
                 this._registryLoginServer = imageList[0];
             }
         }
         this._registryUsername = core.getInput('registry-username');
         this._registryPassword = core.getInput('registry-password');
         let restartPolicy = core.getInput('restart-policy');
-        if(!["Always", "OnFailure", "Never"].includes(restartPolicy)) {
+        if (!["Always", "OnFailure", "Never"].includes(restartPolicy)) {
             throw Error('The Value of Restart Policy can be "Always", "OnFailure" or "Never" only!');
         } else {
-            this._restartPolicy = ( restartPolicy == 'Always' ) ? 'Always' : ( restartPolicy == 'Never' ? 'Never' : 'OnFailure');
+            this._restartPolicy = (restartPolicy == 'Always') ? 'Always' : (restartPolicy == 'Never' ? 'Never' : 'OnFailure');
         }
 
         this._volumes = [];
@@ -116,20 +122,25 @@ export class TaskParameters {
         let afsAccountName = core.getInput('azure-file-volume-account-name');
         let afsShareName = core.getInput('azure-file-volume-share-name');
         this._getVolumes(gitRepoVolumeUrl, afsShareName, afsAccountName);
+
+        this._subnet_ids = [];
+        this._getSubnetIds(core.getInput('subnet-ids'));
     }
 
     private _getDiagnostics(logAnalyticsWorkspace: string, logAnalyticsWorkspaceKey: string, logType: string) {
-        if(logAnalyticsWorkspace || logAnalyticsWorkspaceKey) {
-            if(!logAnalyticsWorkspaceKey || !logAnalyticsWorkspace) {
+        if (logAnalyticsWorkspace || logAnalyticsWorkspaceKey) {
+            if (!logAnalyticsWorkspaceKey || !logAnalyticsWorkspace) {
                 throw Error("The Log Analytics Workspace Id or Workspace Key are not provided. Please fill in the appropriate parameters.");
             }
-            if(logType && !['ContainerInsights', 'ContainerInstanceLogs'].includes(logType)) {
+            if (logType && !['ContainerInsights', 'ContainerInstanceLogs'].includes(logType)) {
                 throw Error("Log Type Can be Only of Type `ContainerInsights` or `ContainerInstanceLogs`");
             }
-            let logAnalytics: ContainerInstanceManagementModels.LogAnalytics = { "workspaceId": logAnalyticsWorkspace, 
-                                                                                 "workspaceKey": logAnalyticsWorkspaceKey };
-            if(logType) {
-                let logT: ContainerInstanceManagementModels.LogAnalyticsLogType;
+            let logAnalytics: LogAnalytics = {
+                "workspaceId": logAnalyticsWorkspace,
+                "workspaceKey": logAnalyticsWorkspaceKey
+            };
+            if (logType) {
+                let logT: LogAnalyticsLogType;
                 logT = (logType == 'ContainerInsights') ? 'ContainerInsights' : 'ContainerInstanceLogs';
                 logAnalytics.logType = logT;
             }
@@ -138,27 +149,27 @@ export class TaskParameters {
     }
 
     private _getEnvironmentVariables(environmentVariables: string, secureEnvironmentVariables: string) {
-        if(environmentVariables) {
+        if (environmentVariables) {
             // split on whitespace, but ignore the ones that are enclosed in quotes
             let keyValuePairs = environmentVariables.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
             keyValuePairs.forEach((pair: string) => {
                 // value is either wrapped in quotes or not
                 let pairList = pair.split(/=(?:"(.+)"|(.+))/);
-                let obj: ContainerInstanceManagementModels.EnvironmentVariable = { 
-                    "name": pairList[0], 
+                let obj: EnvironmentVariable = {
+                    "name": pairList[0],
                     "value": pairList[1] || pairList[2]
                 };
                 this._environmentVariables.push(obj);
             })
         }
-        if(secureEnvironmentVariables) {
+        if (secureEnvironmentVariables) {
             // split on whitespace, but ignore the ones that are enclosed in quotes
             let keyValuePairs = secureEnvironmentVariables.match(/(?:[^\s"]+|"[^"]*")+/g) || [];
             keyValuePairs.forEach((pair: string) => {
                 // value is either wrapped in quotes or not
                 let pairList = pair.split(/=(?:"(.+)"|(.+))/);
-                let obj: ContainerInstanceManagementModels.EnvironmentVariable = { 
-                    "name": pairList[0], 
+                let obj: EnvironmentVariable = {
+                    "name": pairList[0],
                     "secureValue": pairList[1] || pairList[2]
                 };
                 this._environmentVariables.push(obj);
@@ -166,8 +177,8 @@ export class TaskParameters {
         }
     }
 
-    private  _getPorts(ports: string) {
-        let portObjArr: Array<ContainerInstanceManagementModels.Port> = [];
+    private _getPorts(ports: string) {
+        let portObjArr: Array<Port> = [];
         ports.split(' ').forEach((portStr: string) => {
             let portInt = parseInt(portStr);
             portObjArr.push({ "port": portInt });
@@ -175,41 +186,50 @@ export class TaskParameters {
         this._ports = portObjArr;
     }
 
+    private _getSubnetIds(subnets: string) {
+        let subnetIdObjArr: Array<ContainerGroupSubnetId> = [];
+        subnets.split(' ').forEach((id: string) => {
+            let subnetIdObj: ContainerGroupSubnetId = { 'id': id };
+            subnetIdObjArr.push(subnetIdObj);
+        });
+        this._subnet_ids = subnetIdObjArr;
+    }
+
     private _getVolumes(gitRepoVolumeUrl: string, afsShareName: string, afsAccountName: string) {
         // Checking git repo volumes
-        if(gitRepoVolumeUrl) {
+        if (gitRepoVolumeUrl) {
             let gitRepoDir = core.getInput('gitrepo-dir');
             let gitRepoMountPath = core.getInput('gitrepo-mount-path');
             let gitRepoRevision = core.getInput('gitrepo-revision');
-            let vol: ContainerInstanceManagementModels.GitRepoVolume = { "repository": gitRepoVolumeUrl };
-            if(!gitRepoMountPath) {
+            let vol: GitRepoVolume = { "repository": gitRepoVolumeUrl };
+            if (!gitRepoMountPath) {
                 throw Error("The Mount Path for GitHub Volume is not specified.");
             }
-            if(gitRepoDir) {
+            if (gitRepoDir) {
                 vol.directory = gitRepoDir;
             }
-            if(gitRepoRevision) {
+            if (gitRepoRevision) {
                 vol.revision = gitRepoRevision;
             }
-            let volMount: ContainerInstanceManagementModels.VolumeMount = { "name":"git-repo-vol", "mountPath":gitRepoMountPath };
+            let volMount: VolumeMount = { "name": "git-repo-vol", "mountPath": gitRepoMountPath };
             this._volumes.push({ "name": "git-repo-vol", gitRepo: vol });
             this._volumeMounts.push(volMount);
         }
         // Checking Azure File Share Volumes
-        if(afsShareName && afsAccountName) {
+        if (afsShareName && afsAccountName) {
             let afsMountPath = core.getInput('azure-file-volume-mount-path');
             let afsAccountKey = core.getInput('azure-file-volume-account-key');
             let afsReadOnly = core.getInput('azure-file-volume-read-only');
-            if(!afsMountPath) {
+            if (!afsMountPath) {
                 throw Error("The Mount Path for Azure File Share Volume is not specified");
             }
-            let vol: ContainerInstanceManagementModels.AzureFileVolume = { "shareName": afsShareName, "storageAccountName": afsAccountName };
-            if(afsAccountKey) {
+            let vol: AzureFileVolume = { "shareName": afsShareName, "storageAccountName": afsAccountName };
+            if (afsAccountKey) {
                 vol.storageAccountKey = afsAccountKey;
             }
-            let volMount: ContainerInstanceManagementModels.VolumeMount = { "name": "azure-file-share-vol", "mountPath": afsMountPath };
-            if(afsReadOnly) {
-                if(!["true", "false"].includes(afsReadOnly)) {
+            let volMount: VolumeMount = { "name": "azure-file-share-vol", "mountPath": afsMountPath };
+            if (afsReadOnly) {
+                if (!["true", "false"].includes(afsReadOnly)) {
                     throw Error("The Read-Only Flag can only be `true` or `false` for the Azure File Share Volume");
                 }
                 vol.readOnly = (afsReadOnly == "true");
@@ -217,15 +237,15 @@ export class TaskParameters {
             }
             this._volumes.push({ "name": "azure-file-share-vol", azureFile: vol });
             this._volumeMounts.push(volMount);
-        } else if(!afsShareName && afsAccountName) {
+        } else if (!afsShareName && afsAccountName) {
             throw Error("The Name of the Azure File Share is required to mount it as a volume");
-        } else if(!afsAccountName && afsShareName) {
+        } else if (!afsAccountName && afsShareName) {
             throw Error("The Storage Account Name for the Azure File Share is required to mount it as a volume");
-        } else {};
+        } else { };
     }
 
     public static getTaskParams(endpoint: IAuthorizer) {
-        if(!this.taskparams) {
+        if (!this.taskparams) {
             this.taskparams = new TaskParameters(endpoint);
         }
         return this.taskparams;
@@ -304,7 +324,7 @@ export class TaskParameters {
     }
 
     public get registryPassword() {
-        return  this._registryPassword;
+        return this._registryPassword;
     }
 
     public get restartPolicy() {
@@ -321,6 +341,10 @@ export class TaskParameters {
 
     public get subscriptionId() {
         return this._subscriptionId;
+    }
+
+    public get subnetIds() {
+        return this._subnet_ids;
     }
 
 }
